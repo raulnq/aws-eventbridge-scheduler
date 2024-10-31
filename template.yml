@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM
+
+Resources:
+
+  MyEventBus: 
+    Type: AWS::Scheduler::ScheduleGroup
+    Properties: 
+      Name: "myapp"    
+
+  ProducerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      Environment:
+        Variables:
+          TARGET_ARN: !GetAtt ConsumerFunction.Arn
+          ROLE_ARN: !GetAtt ConsumerRole.Arn
+      MemorySize: 512
+      Tracing: Active
+      Runtime: dotnet8
+      Architectures:
+        - x86_64    
+      Handler: MyLambda::MyLambda.Function::Produce
+      CodeUri: ./src/MyLambda/
+      Policies:
+        - Version: '2012-10-17' 
+          Statement:
+          - Effect: Allow
+            Action:
+              - scheduler:CreateSchedule
+            Resource: '*'
+          - Effect: Allow
+            Action: 
+              - iam:PassRole
+            Resource: !GetAtt ConsumerRole.Arn
+      Events:
+        Post:
+          Type: Api
+          Properties:
+            Path: /events
+            Method: post
+
+  ConsumerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: ConsumerRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "scheduler.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: AllowInvokeLambda
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - "lambda:InvokeFunction"
+                Resource: 
+                  - !GetAtt ConsumerFunction.Arn
+
+  RateSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      GroupName: myapp
+      Name: "myrateschedule"
+      State: ENABLED
+      FlexibleTimeWindow:
+        Mode: 'OFF'
+      ScheduleExpression: "rate(5 minutes)"
+      Target:
+        Arn: !GetAtt ConsumerFunction.Arn
+        RoleArn: !GetAtt ConsumerRole.Arn
+        Input: '{"Key": "123"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 10
+
+  DailyCronSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      GroupName: myapp
+      Name: "mydailycronschedule"
+      State: ENABLED
+      FlexibleTimeWindow:
+        Mode: 'FLEXIBLE'
+        MaximumWindowInMinutes: 10
+      ScheduleExpression: "cron(15 10 * * ? *)"
+      Target:
+        Arn: !GetAtt ConsumerFunction.Arn
+        RoleArn: !GetAtt ConsumerRole.Arn
+        Input: '{"Key": "abc"}'
+
+  ConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Timeout: 60
+      MemorySize: 512
+      Tracing: Active
+      Runtime: dotnet8
+      Architectures:
+        - x86_64    
+      Handler: MyLambda::MyLambda.Function::Consume
+      CodeUri: ./src/MyLambda/
+      Events:
+        ScheduleEvent:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "rate(10 minute)"
+            Name: "myrateschedulev2"
+            GroupName: myapp
+            State: ENABLED
+            Input: '{"Key": "xyz"}'
+            RetryPolicy:
+              MaximumRetryAttempts: 5
+            DeadLetterConfig:
+              Type: SQS
+
+Outputs:
+  MyApiEndpoint:
+    Description: "API endpoint"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/events"

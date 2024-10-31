@@ -15,7 +15,8 @@
 
 # Mono auto generated files
 mono_crash.*
-
+.aws-sam/
+*.toml
 # Build results
 [Dd]ebug/
 [Dd]ebugPublic/
